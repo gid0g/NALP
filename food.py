@@ -3,7 +3,6 @@ from telegram.ext import Application, CommandHandler, CallbackContext, CallbackQ
 import logging
 import requests
 import os
-import asyncio
 import urllib.parse
 from dotenv import load_dotenv
 from categories import (
@@ -651,33 +650,41 @@ async def confirm_checkout(update: Update, context: CallbackContext):
 
 def main():
     """Main function to set up and run the bot"""
-    application = Application.builder().token(API_TOKEN).build()
+    try:
+        application = Application.builder().token(API_TOKEN).build()
 
-    # Conversation handler for checkout flow
-    conv_handler = ConversationHandler(
-        entry_points=[CallbackQueryHandler(ask_hostel, pattern="^checkout$")],
-        states={
-            HOSTEL: [MessageHandler(filters.TEXT & ~filters.COMMAND, ask_room_number)],
-            ROOM_NUMBER: [MessageHandler(filters.TEXT & ~filters.COMMAND, ask_recipient_name)],
-            RECIPIENT_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, ask_email)],
-            EMAIL: [MessageHandler(filters.TEXT & ~filters.COMMAND, ask_delivery_time)],
-            DELIVERY_TIME: [CallbackQueryHandler(handle_delivery_time)],
-        },
-        fallbacks=[],
-        per_message=False,
-        per_chat=True,
-        per_user=True
-    )
+        # Conversation handler for checkout flow
+        conv_handler = ConversationHandler(
+            entry_points=[CallbackQueryHandler(
+                ask_hostel, pattern="^checkout$")],
+            states={
+                HOSTEL: [MessageHandler(filters.TEXT & ~filters.COMMAND, ask_room_number)],
+                ROOM_NUMBER: [MessageHandler(filters.TEXT & ~filters.COMMAND, ask_recipient_name)],
+                RECIPIENT_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, ask_email)],
+                EMAIL: [MessageHandler(filters.TEXT & ~filters.COMMAND, ask_delivery_time)],
+                DELIVERY_TIME: [CallbackQueryHandler(handle_delivery_time)],
+            },
+            fallbacks=[],
+            per_message=False,
+            per_chat=True,
+            per_user=True
+        )
 
-    # Add handlers
-    application.add_handler(conv_handler)
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CallbackQueryHandler(button_click_handler))
+        # Add handlers
+        application.add_handler(conv_handler)
+        application.add_handler(CommandHandler("start", start))
+        application.add_handler(CallbackQueryHandler(button_click_handler))
 
-    # Start the bot with polling
-    print("🚀 Starting bot in polling mode...")
-    application.run_polling(drop_pending_updates=True)
+        # Start the bot with polling
+        print("🚀 Starting bot in polling mode...")
+        application.run_polling(
+            drop_pending_updates=True,
+            allowed_updates=['message', 'callback_query']
+        )
 
+    except Exception as e:
+        logger.error(f"Error initializing application: {e}")
+        raise
 
 if __name__ == "__main__":
     try:
