@@ -701,9 +701,10 @@ async def setup_webhook_and_run(application):
         server.shutdown()
         await application.shutdown()
 
+
 def main():
     """Main function to set up and run the bot"""
-    global application  # Add this line
+    global application
 
     try:
         application = Application.builder().token(API_TOKEN).build()
@@ -732,11 +733,17 @@ def main():
         application.add_error_handler(error_handler)
 
         # Set up webhook first, then run
-        asyncio.run(setup_webhook_and_run(application))
+        try:
+            asyncio.run(setup_webhook_and_run(application))
+        except KeyboardInterrupt:
+            logger.info("Bot stopped by user")
+        except Exception as e:
+            logger.error(f"Error running webhook: {e}")
 
     except Exception as e:
         logger.error(f"Error initializing application: {e}")
         raise
+
 
 application = None
 
@@ -801,19 +808,21 @@ class WebhookHandler(BaseHTTPRequestHandler):
             from telegram import Update
             update = Update.de_json(update_data, application.bot)
 
-            # Create a new task for processing the update
-            def run_async():
-                try:
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
-                    loop.run_until_complete(application.process_update(update))
-                    loop.close()
-                except Exception as e:
-                    logger.error(f"Error in async processing: {e}")
-
-            # Run in a separate thread to avoid blocking
-            thread = threading.Thread(target=run_async)
-            thread.start()
+            # Use asyncio.run_coroutine_threadsafe instead of creating new event loop
+            try:
+                # Get the existing event loop from the main thread
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    # Schedule the coroutine in the existing loop
+                    future = asyncio.run_coroutine_threadsafe(
+                        application.process_update(update), loop)
+                    future.result(timeout=30)  # Wait for completion with timeout
+                else:
+                    # Fallback: run in new loop
+                    asyncio.run(application.process_update(update))
+            except RuntimeError:
+                # If no event loop exists, create one
+                asyncio.run(application.process_update(update))
 
         except Exception as e:
             logger.error(f"Error processing update: {e}")
@@ -849,16 +858,14 @@ async def setup_webhook(application):
 # Make application global so WebhookHandler can access it
 if __name__ == "__main__":
     try:
-        main()
+        application.run_webhook(
+            listen="0.0.0.0",
+            port=int(os.environ.get("PORT", 8080)),
+            webhook_url=f"{WEBHOOK_URL}/webhook",
+            secret_token=WEBHOOK_SECRET  # if you use one
+        )
     except KeyboardInterrupt:
         print("\n🛑 Bot stopped by user")
-        if application:
-            try:
-                # Use asyncio.run instead of creating new event loop
-                asyncio.run(application.bot.delete_webhook())
-                logger.info("🧹 Webhook removed")
-            except Exception as e:
-                logger.error(f"Error removing webhook: {e}")
     except Exception as e:
         logger.error(f"Fatal error: {e}")
         print(f"❌ Bot failed to start: {e}")
