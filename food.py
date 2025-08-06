@@ -715,6 +715,7 @@ class WebhookHandler(BaseHTTPRequestHandler):
             self.send_response(404)
             self.end_headers()
 
+
     def do_POST(self):
         # Handle webhook updates
         if self.path == '/webhook':
@@ -734,8 +735,8 @@ class WebhookHandler(BaseHTTPRequestHandler):
                 # Parse the update
                 update_data = json.loads(post_data.decode('utf-8'))
 
-                # Process the update asynchronously
-                asyncio.run(self.process_update(update_data))
+                # Process the update (now synchronous)
+                self.process_update(update_data)
 
                 self.send_response(200)
                 self.send_header('Content-type', 'application/json')
@@ -750,12 +751,19 @@ class WebhookHandler(BaseHTTPRequestHandler):
             self.send_response(404)
             self.end_headers()
 
-    async def process_update(self, update_data):
+    def process_update(self, update_data):
         """Process incoming webhook update"""
         try:
             from telegram import Update
             update = Update.de_json(update_data, application.bot)
-            await application.process_update(update)
+            # Schedule the coroutine in the existing event loop
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                # Create a task in the running loop
+                asyncio.create_task(application.process_update(update))
+            else:
+                # If no loop is running, run it
+                asyncio.run(application.process_update(update))
         except Exception as e:
             logger.error(f"Error processing update: {e}")
 
