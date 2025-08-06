@@ -14,6 +14,7 @@ import json
 import asyncio
 from urllib.parse import parse_qs
 from telegram.ext import ContextTypes
+
 from categories import (
     main_menu_keyboard,
     place_order_keyboard,
@@ -745,8 +746,14 @@ def main():
         raise
 
 
-application = None
+application = Application.builder().token(API_TOKEN).build()
 
+
+async def on_shutdown(app: Application):
+    await app.bot.delete_webhook()
+    logger.info("🧹 Webhook removed")
+
+application.post_stop = on_shutdown
 
 class WebhookHandler(BaseHTTPRequestHandler):
     def do_GET(self):
