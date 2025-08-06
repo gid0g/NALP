@@ -835,7 +835,7 @@ class WebhookHandler(BaseHTTPRequestHandler):
 
         except Exception as e:
             logger.error(f"Error processing update: {e}")
-            
+
 async def setup_webhook(application):
     """Set up the webhook"""
     if not WEBHOOK_URL:
