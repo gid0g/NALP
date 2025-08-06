@@ -1,5 +1,4 @@
 from http.server import HTTPServer, BaseHTTPRequestHandler
-import threading
 import telegram
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import Application, CommandHandler, CallbackContext, CallbackQueryHandler, ConversationHandler, MessageHandler, filters
@@ -15,7 +14,6 @@ import json
 import asyncio
 from urllib.parse import parse_qs
 from telegram.ext import ContextTypes
-from http.server import HTTPServer, BaseHTTPRequestHandler
 from categories import (
     main_menu_keyboard,
     place_order_keyboard,
@@ -62,8 +60,8 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Conversation states
-WAITING_FOR_QUANTITY = range(1)
-HOSTEL, ROOM_NUMBER, RECIPIENT_NAME, EMAIL, DELIVERY_TIME = range(5)
+WAITING_FOR_QUANTITY, HOSTEL, ROOM_NUMBER, RECIPIENT_NAME, EMAIL, DELIVERY_TIME = range(6)
+
 
 
 async def call_all():
@@ -660,9 +658,52 @@ async def confirm_checkout(update: Update, context: CallbackContext):
         await query.message.reply_text("⚠️ An error occurred while confirming your checkout. Please try again.")
 
 
+async def cancel_checkout(update: Update, context: CallbackContext):
+    """Cancel the checkout process"""
+    await update.message.reply_text(
+        "Checkout cancelled. What would you like to do next?",
+        reply_markup=main_menu_keyboard()
+    )
+    return ConversationHandler.END
+
+
+async def error_handler(update, context: ContextTypes.DEFAULT_TYPE):
+    logger.error(f"Update {update} caused error {context.error}")
+
+
+async def setup_webhook_and_run(application):
+    """Set up webhook and run the application"""
+    # Initialize the application
+    await application.initialize()
+
+    # Set up webhook
+    await setup_webhook(application)
+
+    # Start webhook server in a separate thread
+    import threading
+    port = int(os.environ.get('PORT', 8080))
+    server = HTTPServer(('0.0.0.0', port), WebhookHandler)
+
+    def run_server():
+        logger.info(f"🚀 Webhook server started on port {port}")
+        server.serve_forever()
+
+    server_thread = threading.Thread(target=run_server)
+    server_thread.daemon = True
+    server_thread.start()
+
+    # Keep the main thread alive
+    try:
+        while True:
+            await asyncio.sleep(1)
+    except KeyboardInterrupt:
+        logger.info("Shutting down webhook server...")
+        server.shutdown()
+        await application.shutdown()
+
 def main():
     """Main function to set up and run the bot"""
-    global application
+    global application  # Add this line
 
     try:
         application = Application.builder().token(API_TOKEN).build()
@@ -678,7 +719,7 @@ def main():
                 EMAIL: [MessageHandler(filters.TEXT & ~filters.COMMAND, ask_delivery_time)],
                 DELIVERY_TIME: [CallbackQueryHandler(handle_delivery_time)],
             },
-            fallbacks=[],
+            fallbacks=[CommandHandler('cancel', cancel_checkout)],
             per_message=False,
             per_chat=True,
             per_user=True
@@ -688,24 +729,17 @@ def main():
         application.add_handler(conv_handler)
         application.add_handler(CommandHandler("start", start))
         application.add_handler(CallbackQueryHandler(button_click_handler))
+        application.add_error_handler(error_handler)
 
-        # Initialize and set up webhook in a single event loop
-        application.run_webhook(
-            listen="0.0.0.0",
-            port=int(os.environ.get("PORT", 10000)),
-            webhook_url=f"{WEBHOOK_URL}/webhook",
-            secret_token=WEBHOOK_SECRET  
-        )
-
+        # Set up webhook first, then run
+        asyncio.run(setup_webhook_and_run(application))
 
     except Exception as e:
         logger.error(f"Error initializing application: {e}")
         raise
 
-async def error_handler(update, context: ContextTypes.DEFAULT_TYPE):
-    logger.error(f"Update {update} caused error {context.error}")
+application = None
 
-application.add_error_handler(error_handler)
 
 class WebhookHandler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -758,38 +792,33 @@ class WebhookHandler(BaseHTTPRequestHandler):
 
     def process_update(self, update_data):
         """Process incoming webhook update"""
+        global application
+        if application is None:
+            logger.error("Application not initialized")
+            return
+
         try:
             from telegram import Update
             update = Update.de_json(update_data, application.bot)
 
-            # Use asyncio.run_coroutine_threadsafe for thread-safe execution
-            import concurrent.futures
+            # Create a new task for processing the update
+            def run_async():
+                try:
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    loop.run_until_complete(application.process_update(update))
+                    loop.close()
+                except Exception as e:
+                    logger.error(f"Error in async processing: {e}")
 
-            # Get or create event loop for the main thread
-            try:
-                # Try to get the main event loop
-                main_loop = asyncio.get_event_loop()
-                if main_loop.is_closed():
-                    raise RuntimeError("Loop is closed")
-            except RuntimeError:
-                # Create new event loop if none exists or if closed
-                main_loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(main_loop)
-
-            # Schedule the coroutine without blocking
-            if main_loop.is_running():
-                # If loop is running, schedule the task
-                future = asyncio.run_coroutine_threadsafe(
-                    application.process_update(update), main_loop
-                )
-            else:
-                # If loop is not running, start it temporarily
-                main_loop.run_until_complete(application.process_update(update))
+            # Run in a separate thread to avoid blocking
+            thread = threading.Thread(target=run_async)
+            thread.start()
 
         except Exception as e:
             logger.error(f"Error processing update: {e}")
 
-async def setup_webhook():
+async def setup_webhook(application):
     """Set up the webhook"""
     if not WEBHOOK_URL:
         raise ValueError(
@@ -798,7 +827,6 @@ async def setup_webhook():
     try:
         webhook_info = await application.bot.get_webhook_info()
         current_url = webhook_info.url if webhook_info else None
-
         target_url = f"{WEBHOOK_URL}/webhook"
 
         if current_url != target_url:
@@ -816,27 +844,21 @@ async def setup_webhook():
         raise
 
 
-def start_webhook_server():
-    """Start the webhook server"""
-    port = int(os.environ.get('PORT', 8080))
-    server = HTTPServer(('0.0.0.0', port), WebhookHandler)
-    logger.info(f"🚀 Webhook server started on port {port}")
-    server.serve_forever()
 
 
 # Make application global so WebhookHandler can access it
-application = None
-
 if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt:
         print("\n🛑 Bot stopped by user")
-        # Clean up webhook on shutdown
         if application:
-            asyncio.run(application.bot.delete_webhook())
-            logger.info("🧹 Webhook removed")
+            try:
+                # Use asyncio.run instead of creating new event loop
+                asyncio.run(application.bot.delete_webhook())
+                logger.info("🧹 Webhook removed")
+            except Exception as e:
+                logger.error(f"Error removing webhook: {e}")
     except Exception as e:
         logger.error(f"Fatal error: {e}")
         print(f"❌ Bot failed to start: {e}")
-
