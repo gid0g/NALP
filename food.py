@@ -751,26 +751,37 @@ class WebhookHandler(BaseHTTPRequestHandler):
             self.send_response(404)
             self.end_headers()
 
+
     def process_update(self, update_data):
         """Process incoming webhook update"""
         try:
             from telegram import Update
             update = Update.de_json(update_data, application.bot)
-            
-            # Create a new event loop for this thread if none exists
+
+            # Use asyncio.run_coroutine_threadsafe for thread-safe execution
+            import concurrent.futures
+
+            # Get or create event loop for the main thread
             try:
-                loop = asyncio.get_event_loop()
+                # Try to get the main event loop
+                main_loop = asyncio.get_event_loop()
+                if main_loop.is_closed():
+                    raise RuntimeError("Loop is closed")
             except RuntimeError:
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-            
-            if loop.is_running():
-                # Create a task in the running loop
-                asyncio.create_task(application.process_update(update))
+                # Create new event loop if none exists or if closed
+                main_loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(main_loop)
+
+            # Schedule the coroutine without blocking
+            if main_loop.is_running():
+                # If loop is running, schedule the task
+                future = asyncio.run_coroutine_threadsafe(
+                    application.process_update(update), main_loop
+                )
             else:
-                # If no loop is running, run it
-                loop.run_until_complete(application.process_update(update))
-                
+                # If loop is not running, start it temporarily
+                main_loop.run_until_complete(application.process_update(update))
+
         except Exception as e:
             logger.error(f"Error processing update: {e}")
 
