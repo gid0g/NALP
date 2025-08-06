@@ -14,6 +14,7 @@ import threading
 import json
 import asyncio
 from urllib.parse import parse_qs
+from telegram.ext import ContextTypes
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from categories import (
     main_menu_keyboard,
@@ -689,19 +690,22 @@ def main():
         application.add_handler(CallbackQueryHandler(button_click_handler))
 
         # Initialize and set up webhook in a single event loop
-        async def setup_and_run():
-            await application.initialize()
-            await setup_webhook()
+        application.run_webhook(
+            listen="0.0.0.0",
+            port=int(os.environ.get("PORT", 10000)),
+            webhook_url=f"{WEBHOOK_URL}/webhook",
+            secret_token=WEBHOOK_SECRET  
+        )
 
-        # Run the async setup
-        asyncio.run(setup_and_run())
-
-        # Start webhook server (this will block)
-        start_webhook_server()
 
     except Exception as e:
         logger.error(f"Error initializing application: {e}")
         raise
+
+async def error_handler(update, context: ContextTypes.DEFAULT_TYPE):
+    logger.error(f"Update {update} caused error {context.error}")
+
+application.add_error_handler(error_handler)
 
 class WebhookHandler(BaseHTTPRequestHandler):
     def do_GET(self):
