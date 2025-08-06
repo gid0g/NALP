@@ -1,3 +1,5 @@
+from http.server import HTTPServer, BaseHTTPRequestHandler
+import threading
 import telegram
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import Application, CommandHandler, CallbackContext, CallbackQueryHandler, ConversationHandler, MessageHandler, filters
@@ -9,6 +11,8 @@ from dotenv import load_dotenv
 import uuid
 import time
 import json
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
 from categories import (
     main_menu_keyboard,
     place_order_keyboard,
@@ -688,10 +692,35 @@ def main():
         logger.error(f"Error initializing application: {e}")
         raise
 
+# Add a simple health check server for Render
+
+
+class HealthHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header('Content-type', 'text/plain')
+        self.end_headers()
+        self.wfile.write(b'Bot is running')
+
+
+def start_health_server():
+    port = int(os.environ.get('PORT', 8080))
+    server = HTTPServer(('0.0.0.0', port), HealthHandler)
+    server.serve_forever()
+
+
 if __name__ == "__main__":
+    # Start health check server in background
+    health_thread = threading.Thread(target=start_health_server, daemon=True)
+    health_thread.start()
+    print(
+        f"🏥 Health check server started on port {os.environ.get('PORT', 8080)}")
+
     try:
         main()
     except KeyboardInterrupt:
-        print("Bot stopped by user")
+        print("\n🛑 Bot stopped by user")
     except Exception as e:
-        logger.error(f"Error in main function: {e}")
+        logger.error(f"Fatal error: {e}")
+        print(f"❌ Bot failed to start: {e}")
+
