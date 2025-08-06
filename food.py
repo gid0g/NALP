@@ -756,17 +756,23 @@ class WebhookHandler(BaseHTTPRequestHandler):
         try:
             from telegram import Update
             update = Update.de_json(update_data, application.bot)
-            # Schedule the coroutine in the existing event loop
-            loop = asyncio.get_event_loop()
+            
+            # Create a new event loop for this thread if none exists
+            try:
+                loop = asyncio.get_event_loop()
+            except RuntimeError:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+            
             if loop.is_running():
                 # Create a task in the running loop
                 asyncio.create_task(application.process_update(update))
             else:
                 # If no loop is running, run it
-                asyncio.run(application.process_update(update))
+                loop.run_until_complete(application.process_update(update))
+                
         except Exception as e:
             logger.error(f"Error processing update: {e}")
-
 
 async def setup_webhook():
     """Set up the webhook"""
