@@ -10,8 +10,10 @@ import urllib.parse
 from dotenv import load_dotenv
 import uuid
 import time
-import json
 import threading
+import json
+import asyncio
+from urllib.parse import parse_qs
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from categories import (
     main_menu_keyboard,
@@ -31,6 +33,8 @@ BASE_URL = os.getenv("BASE_URL")
 ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID")
 REDIRECT_URL = os.getenv("REDIRECT_URL")
 FLW_SECRET_KEY = os.getenv("FLW_SECRET_KEY")
+WEBHOOK_URL = os.getenv("WEBHOOK_URL")
+WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "your_secret_token")
 
 # Validate required environment variables
 if not API_TOKEN:
@@ -656,6 +660,8 @@ async def confirm_checkout(update: Update, context: CallbackContext):
 
 def main():
     """Main function to set up and run the bot"""
+    global application
+
     try:
         application = Application.builder().token(API_TOKEN).build()
 
@@ -681,45 +687,125 @@ def main():
         application.add_handler(CommandHandler("start", start))
         application.add_handler(CallbackQueryHandler(button_click_handler))
 
-        # Start the bot with polling
-        print("🚀 Starting bot in polling mode...")
-        application.run_polling(
-            drop_pending_updates=True,
-            allowed_updates=['message', 'callback_query']
-        )
+        # Initialize the application
+        asyncio.run(application.initialize())
+
+        # Set up webhook
+        asyncio.run(setup_webhook())
+
+        # Start webhook server (this will block)
+        start_webhook_server()
 
     except Exception as e:
         logger.error(f"Error initializing application: {e}")
         raise
-
 # Add a simple health check server for Render
 
 
-class HealthHandler(BaseHTTPRequestHandler):
+class WebhookHandler(BaseHTTPRequestHandler):
     def do_GET(self):
-        self.send_response(200)
-        self.send_header('Content-type', 'text/plain')
-        self.end_headers()
-        self.wfile.write(b'Bot is running')
+        # Health check endpoint
+        if self.path == '/health':
+            self.send_response(200)
+            self.send_header('Content-type', 'text/plain')
+            self.end_headers()
+            self.wfile.write(b'Bot is running')
+        else:
+            self.send_response(404)
+            self.end_headers()
+
+    def do_POST(self):
+        # Handle webhook updates
+        if self.path == '/webhook':
+            try:
+                content_length = int(self.headers['Content-Length'])
+                post_data = self.rfile.read(content_length)
+
+                # Optional: Verify webhook secret
+                if WEBHOOK_SECRET:
+                    webhook_token = self.headers.get(
+                        'X-Telegram-Bot-Api-Secret-Token', '')
+                    if webhook_token != WEBHOOK_SECRET:
+                        self.send_response(401)
+                        self.end_headers()
+                        return
+
+                # Parse the update
+                update_data = json.loads(post_data.decode('utf-8'))
+
+                # Process the update asynchronously
+                asyncio.run(self.process_update(update_data))
+
+                self.send_response(200)
+                self.send_header('Content-type', 'application/json')
+                self.end_headers()
+                self.wfile.write(b'{"ok": true}')
+
+            except Exception as e:
+                logger.error(f"Error processing webhook: {e}")
+                self.send_response(500)
+                self.end_headers()
+        else:
+            self.send_response(404)
+            self.end_headers()
+
+    async def process_update(self, update_data):
+        """Process incoming webhook update"""
+        try:
+            from telegram import Update
+            update = Update.de_json(update_data, application.bot)
+            await application.process_update(update)
+        except Exception as e:
+            logger.error(f"Error processing update: {e}")
 
 
-def start_health_server():
+async def setup_webhook():
+    """Set up the webhook"""
+    if not WEBHOOK_URL:
+        raise ValueError(
+            "WEBHOOK_URL environment variable is required for webhook mode")
+
+    try:
+        webhook_info = await application.bot.get_webhook_info()
+        current_url = webhook_info.url if webhook_info else None
+
+        target_url = f"{WEBHOOK_URL}/webhook"
+
+        if current_url != target_url:
+            await application.bot.set_webhook(
+                url=target_url,
+                secret_token=WEBHOOK_SECRET if WEBHOOK_SECRET else None,
+                allowed_updates=['message', 'callback_query']
+            )
+            logger.info(f"✅ Webhook set to: {target_url}")
+        else:
+            logger.info(f"✅ Webhook already set to: {target_url}")
+
+    except Exception as e:
+        logger.error(f"❌ Failed to set webhook: {e}")
+        raise
+
+
+def start_webhook_server():
+    """Start the webhook server"""
     port = int(os.environ.get('PORT', 8080))
-    server = HTTPServer(('0.0.0.0', port), HealthHandler)
+    server = HTTPServer(('0.0.0.0', port), WebhookHandler)
+    logger.info(f"🚀 Webhook server started on port {port}")
     server.serve_forever()
 
 
-if __name__ == "__main__":
-    # Start health check server in background
-    health_thread = threading.Thread(target=start_health_server, daemon=True)
-    health_thread.start()
-    print(
-        f"🏥 Health check server started on port {os.environ.get('PORT', 8080)}")
+# Make application global so WebhookHandler can access it
+application = None
 
+if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt:
         print("\n🛑 Bot stopped by user")
+        # Clean up webhook on shutdown
+        if application:
+            asyncio.run(application.bot.delete_webhook())
+            logger.info("🧹 Webhook removed")
     except Exception as e:
         logger.error(f"Fatal error: {e}")
         print(f"❌ Bot failed to start: {e}")
