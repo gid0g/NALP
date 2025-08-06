@@ -688,11 +688,13 @@ def main():
         application.add_handler(CommandHandler("start", start))
         application.add_handler(CallbackQueryHandler(button_click_handler))
 
-        # Initialize the application
-        asyncio.run(application.initialize())
+        # Initialize and set up webhook in a single event loop
+        async def setup_and_run():
+            await application.initialize()
+            await setup_webhook()
 
-        # Set up webhook
-        asyncio.run(setup_webhook())
+        # Run the async setup
+        asyncio.run(setup_and_run())
 
         # Start webhook server (this will block)
         start_webhook_server()
@@ -700,8 +702,6 @@ def main():
     except Exception as e:
         logger.error(f"Error initializing application: {e}")
         raise
-# Add a simple health check server for Render
-
 
 class WebhookHandler(BaseHTTPRequestHandler):
     def do_GET(self):
