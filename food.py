@@ -14,6 +14,7 @@ import json
 import asyncio
 from urllib.parse import parse_qs
 from telegram.ext import ContextTypes
+
 from categories import (
     main_menu_keyboard,
     place_order_keyboard,
@@ -701,9 +702,10 @@ async def setup_webhook_and_run(application):
         server.shutdown()
         await application.shutdown()
 
+
 def main():
     """Main function to set up and run the bot"""
-    global application  # Add this line
+    global application
 
     try:
         application = Application.builder().token(API_TOKEN).build()
@@ -732,14 +734,26 @@ def main():
         application.add_error_handler(error_handler)
 
         # Set up webhook first, then run
-        asyncio.run(setup_webhook_and_run(application))
+        try:
+            asyncio.run(setup_webhook_and_run(application))
+        except KeyboardInterrupt:
+            logger.info("Bot stopped by user")
+        except Exception as e:
+            logger.error(f"Error running webhook: {e}")
 
     except Exception as e:
         logger.error(f"Error initializing application: {e}")
         raise
 
-application = None
 
+application = Application.builder().token(API_TOKEN).build()
+
+
+async def on_shutdown(app: Application):
+    await app.bot.delete_webhook()
+    logger.info("🧹 Webhook removed")
+
+application.post_stop = on_shutdown
 
 class WebhookHandler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -853,16 +867,14 @@ async def setup_webhook(application):
 # Make application global so WebhookHandler can access it
 if __name__ == "__main__":
     try:
-        main()
+        application.run_webhook(
+            listen="0.0.0.0",
+            port=int(os.environ.get("PORT", 8080)),
+            webhook_url=f"{WEBHOOK_URL}/webhook",
+            secret_token=WEBHOOK_SECRET  # if you use one
+        )
     except KeyboardInterrupt:
         print("\n🛑 Bot stopped by user")
-        if application:
-            try:
-                # Use asyncio.run instead of creating new event loop
-                asyncio.run(application.bot.delete_webhook())
-                logger.info("🧹 Webhook removed")
-            except Exception as e:
-                logger.error(f"Error removing webhook: {e}")
     except Exception as e:
         logger.error(f"Fatal error: {e}")
         print(f"❌ Bot failed to start: {e}")
