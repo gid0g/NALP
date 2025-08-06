@@ -1,3 +1,4 @@
+import telegram
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import Application, CommandHandler, CallbackContext, CallbackQueryHandler, ConversationHandler, MessageHandler, filters
 import logging
@@ -5,6 +6,9 @@ import requests
 import os
 import urllib.parse
 from dotenv import load_dotenv
+import uuid
+import time
+import json
 from categories import (
     main_menu_keyboard,
     place_order_keyboard,
@@ -13,9 +17,6 @@ from categories import (
     shopping_mall_delivery_fee,
     category_functions
 )
-import uuid
-import time
-import json
 
 # Load environment variables
 load_dotenv()
@@ -41,6 +42,7 @@ user_cart = {}
 all_categories = []
 all_subcategories = []
 all_items = []
+print(f"🔍 Using python-telegram-bot version: {telegram.__version__}")
 
 # Set up logging
 logging.basicConfig(
