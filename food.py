@@ -806,18 +806,22 @@ class WebhookHandler(BaseHTTPRequestHandler):
                 try:
                     loop = asyncio.new_event_loop()
                     asyncio.set_event_loop(loop)
-                    loop.run_until_complete(application.process_update(update))
-                    loop.close()
+                    try:
+                        loop.run_until_complete(application.process_update(update))
+                    finally:
+                        # Don't close the loop immediately, let it finish naturally
+                        pass
                 except Exception as e:
                     logger.error(f"Error in async processing: {e}")
 
             # Run in a separate thread to avoid blocking
             thread = threading.Thread(target=run_async)
+            thread.daemon = True
             thread.start()
 
         except Exception as e:
             logger.error(f"Error processing update: {e}")
-
+            
 async def setup_webhook(application):
     """Set up the webhook"""
     if not WEBHOOK_URL:
