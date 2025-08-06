@@ -44,6 +44,7 @@ if not BASE_URL:
 
 print(f"Bot starting...")
 print(f"Base URL: {BASE_URL}")
+print(f"WEBHOOK URL: {WEBHOOK_URL}")
 
 # Global variables
 user_cart = {}
